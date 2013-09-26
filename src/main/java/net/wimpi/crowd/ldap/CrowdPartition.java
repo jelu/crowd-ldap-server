@@ -63,11 +63,20 @@ public class CrowdPartition implements Partition {
 
   private List<ServerEntry> m_CrowdOneLevelList;
   private Pattern m_UIDFilter = Pattern.compile("\\(0.9.2342.19200300.100.1.1=([^\\)]*)\\)");
+  //AD memberOf Emulation
+  private boolean m_emulateADmemberOf = false;
 
   public CrowdPartition(CrowdClient client) {
     m_CrowdClient = client;
     m_EntryCache = new LRUCacheMap<String, ServerEntry>(300);
     m_Initialized = new AtomicBoolean(false);
+  }//constructor
+
+  public CrowdPartition(CrowdClient client, boolean emulateADMemberOf) {
+    m_CrowdClient = client;
+    m_EntryCache = new LRUCacheMap<String, ServerEntry>(300);
+    m_Initialized = new AtomicBoolean(false);
+    m_emulateADmemberOf = emulateADMemberOf;
   }//constructor
 
   public void initialize() throws Exception {
@@ -264,12 +273,18 @@ public class CrowdPartition implements Partition {
           log.error("hasEntry()", ex);
         }
         log.debug("Prefix=" + prefix);
-        if (isCrowdGroups(prefix) || isCrowdUsers(prefix)) {
+        if (isCrowdUsers(prefix)) {
           RDN rdn = dn.getRdn(2);
           String user = rdn.getNormValue();
           log.debug("user=" + user);
           ServerEntry userEntry = createUserEntry(dn);
           return (userEntry != null);
+        } else if(isCrowdGroups(prefix)) {
+          RDN rdn = dn.getRdn(2);
+          String group = rdn.getNormValue();
+          log.debug("group=" + group);
+          ServerEntry groupEntry = createGroupEntry(dn);
+          return (groupEntry != null);        
         } else {
           log.debug("Prefix is neither users nor groups");
           log.debug("Crowd Users = " + m_CrowdUsersEntry.getDn());
@@ -294,7 +309,7 @@ public class CrowdPartition implements Partition {
         if (u == null) {
           return null;
         }
-
+        
         //2. Create entry
         userEntry = new DefaultServerEntry(
             m_SchemaManager,
@@ -308,6 +323,16 @@ public class CrowdPartition implements Partition {
         userEntry.put("givenname", u.getFirstName());
         userEntry.put(SchemaConstants.SN_AT, u.getLastName());
         userEntry.put(SchemaConstants.OU_AT, "users");
+
+		//Note: Emulate AD memberof attribute 
+        if(m_emulateADmemberOf) {
+	        //groups
+    	    List<String> groups = m_CrowdClient.getNamesOfGroupsForUser(user, 0, Integer.MAX_VALUE); 
+        	for (String g : groups) {
+          		DN mdn = new DN(String.format("cn=%s,%s", g, CROWD_GROUPS_DN));
+          		userEntry.add("memberof", mdn.getName());
+        	}
+        }
 
         log.debug(userEntry.toString());
 
